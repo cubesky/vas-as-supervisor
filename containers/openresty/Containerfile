@@ -1,0 +1,27 @@
+# OpenResty with the VAS pull agent.
+ARG OPENRESTY_TAG=alpine-fat
+FROM docker.io/openresty/openresty:${OPENRESTY_TAG}
+
+# /etc/openresty does not exist in the official image; the generated config refers to /etc/openresty/vas
+# ca-certificates: /etc/ssl/certs/ca-certificates.crt is used to verify HTTPS upstreams
+# (no opm packages: the agent has its own small HTTP client, so the build doesn't depend on opm.openresty.org)
+# git, unzip, curl, build-base: LuaRocks fetches and builds the Lua packages chosen in the web UI at runtime
+# (luarocks itself ships with the alpine-fat image at /usr/local/openresty/luajit/bin/luarocks)
+RUN apk add --no-cache ca-certificates git unzip curl build-base openssl-dev \
+ && mkdir -p /data /etc/openresty /usr/local/openresty/site/lualib/vas \
+ && rm -f /etc/nginx/conf.d/default.conf \
+ && ln -sfn /data/live /etc/openresty/vas
+
+COPY nginx.conf /usr/local/openresty/nginx/conf/nginx.conf
+COPY lua/vas/agent.lua /usr/local/openresty/site/lualib/vas/agent.lua
+COPY entrypoint.sh /usr/local/bin/vas-openresty-entrypoint
+RUN chmod +x /usr/local/bin/vas-openresty-entrypoint
+
+ENV VAS_MANAGER_URL=http://127.0.0.1:8080 \
+    VAS_POLL_INTERVAL=5 \
+    VAS_OPENRESTY_DATA=/data
+
+VOLUME ["/data"]
+STOPSIGNAL SIGQUIT
+ENTRYPOINT ["/usr/local/bin/vas-openresty-entrypoint"]
+CMD ["openresty", "-g", "daemon off;"]

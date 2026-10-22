@@ -1,0 +1,22 @@
+# Optional: run the manager natively on the host instead of in a container
+# (OpenResty and acme.sh still run as containers). Install the app to
+# /opt/vas (npm ci && npm run build) and the env file to /etc/vas/vas.env.
+[Unit]
+Description=VAS
+After=network-online.target podman.socket libvirtd.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+EnvironmentFile=/etc/vas/vas.env
+Environment=NODE_ENV=production
+WorkingDirectory=/opt/vas
+ExecStart=/usr/bin/node server/dist/index.js
+Restart=always
+RestartSec=3
+# crash loops are also detected by the manager itself (safe mode)
+StartLimitIntervalSec=0
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target

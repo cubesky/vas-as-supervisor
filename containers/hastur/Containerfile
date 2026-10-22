@@ -1,0 +1,44 @@
+# Hastur Server Manager (build from the repository root):
+#   podman build -f containers/hastur/Containerfile -t localhost/hastur:latest .
+
+FROM docker.io/library/node:22-bookworm AS build
+WORKDIR /src
+COPY package.json package-lock.json ./
+COPY server/package.json server/
+COPY web/package.json web/
+# node-pty is optional; it builds here because the full node image ships python3/make/g++
+RUN npm ci --foreground-scripts
+COPY . .
+RUN npm run build && npm prune --omit=dev
+
+FROM docker.io/library/node:22-bookworm-slim
+# xz-utils, gnupg and wget are what the LXC `download` template needs (fetch, verify, unpack images);
+# --no-install-recommends would otherwise leave them out
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      podman podman-compose \
+      lxc xz-utils gnupg wget \
+      libvirt-clients qemu-utils \
+      btrfs-progs e2fsprogs util-linux \
+      iproute2 nftables dnsmasq-base \
+      git curl ca-certificates tini \
+ && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app
+COPY --from=build /src/package.json ./
+COPY --from=build /src/node_modules ./node_modules
+COPY --from=build /src/server/package.json ./server/
+COPY --from=build /src/server/dist ./server/dist
+COPY --from=build /src/web/dist ./web/dist
+
+ENV NODE_ENV=production \
+    HASTUR_WEB_DIR=/app/web/dist \
+    HASTUR_PORT=8080 \
+    HASTUR_DATA_DIR=/mnt/data \
+    # talk to the host's podman service instead of a nested podman
+    CONTAINER_HOST=unix:///run/podman/podman.sock
+
+EXPOSE 8080
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s CMD curl -fsS http://127.0.0.1:${HASTUR_PORT}/api/health || exit 1
+ENTRYPOINT ["/usr/bin/tini", "--"]
+CMD ["node", "server/dist/index.js"]

@@ -1,0 +1,69 @@
+# VAS stack: manager + OpenResty + acme.sh, all in containers.
+#
+#   cp vas.env.example vas.env   # edit it
+#   podman-compose --env-file vas.env up -d --build
+#   install -m 755 vas /usr/local/bin/vas   # CLI on the host (podman exec wrapper)
+#
+# Keep this project OUTSIDE ${VAS_DATA_DIR}/container. The containers carry
+# io.vas.system=true, so the web UI shows them read-only and never stops them.
+#
+# The VAS UI can be served on a domain through OpenResty (VAS_PUBLIC_DOMAIN);
+# the direct port(s) from VAS_LISTEN stay as the way in when OpenResty is broken.
+# OpenResty and acme.sh reach the manager on 127.0.0.1, so keep a loopback or
+# wildcard address in VAS_LISTEN (the default 0.0.0.0:8080 does).
+#
+# Mount notes:
+#  * The data dir is mounted at the SAME absolute path as on the host because
+#    podman, libvirt and LXC run on the host and resolve paths there.
+#  * `rshared` propagation lets mounts made on the host under the data dir
+#    (and btrfs subvolumes created by the manager) show up on both sides.
+
+services:
+  vas:
+    build:
+      context: ..
+      dockerfile: containers/vas/Containerfile
+    image: localhost/vas:latest
+    container_name: vas
+    restart: always
+    network_mode: host      # bridges, nftables, ss and VNC/serial on 127.0.0.1
+    pid: host               # lxc-* runs on the host via nsenter -t 1; process names in the port list
+    cgroup: host
+    privileged: true        # btrfs ioctls, ip/nft, lxc
+    env_file: vas.env
+    labels:
+      io.vas.system: "true"
+    volumes:
+      - ${VAS_DATA_DIR:-/mnt/data}:${VAS_DATA_DIR:-/mnt/data}:rshared
+      - /run/podman/podman.sock:/run/podman/podman.sock
+      - /var/run/libvirt:/var/run/libvirt
+      - /sys/fs/cgroup:/sys/fs/cgroup
+      - /lib/modules:/lib/modules:ro
+
+  openresty:
+    build:
+      context: ../containers/openresty
+      dockerfile: Containerfile
+    image: localhost/vas-openresty:latest
+    container_name: vas-openresty
+    restart: always
+    network_mode: host
+    labels:
+      io.vas.system: "true"
+    environment:
+      VAS_MANAGER_URL: http://127.0.0.1:${VAS_PORT:-8080}
+      VAS_AGENT_TOKEN: ${VAS_AGENT_TOKEN}
+      VAS_POLL_INTERVAL: "5"
+    volumes:
+      - ${VAS_DATA_DIR:-/mnt/data}/vas/openresty:/data
+
+  acme:
+    image: docker.io/neilpang/acme.sh:latest
+    container_name: vas-acme
+    restart: always
+    labels:
+      io.vas.system: "true"
+    network_mode: host      # reload hook calls the manager on 127.0.0.1
+    command: daemon         # keeps crond running for automatic renewals
+    volumes:
+      - ${VAS_DATA_DIR:-/mnt/data}/vas/acme:/acme.sh

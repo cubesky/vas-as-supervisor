@@ -1,0 +1,12 @@
+#!/bin/sh
+# Host-side wrapper for the VAS CLI, which runs inside the manager container
+# and talks to it over its root-only admin socket.
+#   install -m 755 vas /usr/local/bin/vas
+#   vas                 # interactive shell
+#   vas status          # works even when the manager is down
+set -eu
+CONTAINER="${VAS_CONTAINER:-vas}"
+if [ -t 0 ] && [ -t 1 ]; then
+  exec podman exec -it "$CONTAINER" vas "$@"
+fi
+exec podman exec -i "$CONTAINER" vas "$@"
